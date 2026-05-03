@@ -61,6 +61,48 @@ docker compose down
 
 ---
 
+## Production Infrastructure
+
+The app is live at **https://puzzlebox.brianjgoodwin.dev**.
+
+### Components
+
+- **App process** — `~/.config/systemd/user/puzzlebox.service` runs `php artisan serve --host=0.0.0.0 --port=8000`. Enabled at boot via `loginctl enable-linger brian`. Manage with `systemctl --user {start,stop,restart,status} puzzlebox`.
+- **Reverse proxy** — Caddy (`~/developer/caddy-proxy/Caddyfile`) proxies `puzzlebox.brianjgoodwin.dev` → `host.docker.internal:8000`. TLS is automatic via Let's Encrypt (Cloudflare DNS-01 challenge).
+- **Database** — MySQL 8.4 in Docker, persistent volume `sail-mysql`. Start with `docker compose up mysql -d` from the project root.
+- **Firewall** — UFW is active. Port 8000 is intentionally not open to the internet; a rule allows the `caddy-proxy` Docker network (`172.18.0.0/16`) to reach it.
+
+### Trusted proxies
+
+`bootstrap/app.php` sets `trustProxies(at: '*')` so that Laravel respects the `X-Forwarded-Proto: https` header from Caddy and generates correct HTTPS asset URLs.
+
+### Deploying updates
+
+```bash
+git pull
+npm run build                  # always rebuild when Blade or CSS/JS files change
+php artisan migrate --force    # if there are new migrations
+systemctl --user restart puzzlebox
+```
+
+**Important:** Always run `npm run build` after pulling — Tailwind's production build only includes classes found in the source files at build time. Skipping it will cause missing styles.
+
+### Networking note
+
+The Caddy container is on the `caddy-proxy_default` Docker network (gateway `172.18.0.1`). `host.docker.internal` is mapped to that gateway via `extra_hosts` in `~/developer/caddy-proxy/docker-compose.yml`. If the caddy-proxy network is ever recreated and gets a different subnet, update that mapping.
+
+When editing `~/developer/caddy-proxy/Caddyfile`, use `tee` to write in-place rather than a standard editor — atomic file writes (new inode) are not picked up by the running container without a restart:
+
+```bash
+# Safe in-place edit
+tee ~/developer/caddy-proxy/Caddyfile > /dev/null << 'EOF'
+...
+EOF
+docker compose -f ~/developer/caddy-proxy/docker-compose.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
+```
+
+---
+
 ## Project Structure
 
 ```
@@ -120,7 +162,7 @@ puzzlebox/
 | `difficulty` | enum | `debug`, `easy`, `medium`, `hard`, `expert` |
 | `puzzle_data` | json | Starting state. For Sudoku: 81-element array, `null` = blank cell |
 | `solution_data` | json | Complete solved state — never sent to the client |
-| `publish_date` | date | Optional. Unique — enables a "daily puzzle" feature |
+| `publish_date` | date | Optional. Unique per `(type, difficulty, publish_date)` — enables one puzzle per difficulty per day |
 | `created_at/updated_at` | timestamps | |
 
 ### `game_sessions`
@@ -286,9 +328,10 @@ The game engine is built. This phase finishes the player-facing experience.
 
 Put the game in front of real users before adding new games. This phase is about production-readiness, not new features.
 
-- [ ] **Production environment** — Nginx as reverse proxy in front of `php artisan serve` (or PHP-FPM); SSL via Let's Encrypt
-- [ ] **Domain + DNS** — point a real domain at the server
-- [ ] **Environment hardening** — `APP_ENV=production`, `APP_DEBUG=false`, proper `APP_KEY` handling, log rotation
+- [x] **Production environment** — Caddy as reverse proxy in front of `php artisan serve`; SSL via Let's Encrypt (Cloudflare DNS-01 challenge); systemd user service for the app process
+- [x] **Domain + DNS** — live at `puzzlebox.brianjgoodwin.dev`
+- [x] **Environment hardening** — `APP_ENV=production`, `APP_DEBUG=false`, `LOG_LEVEL=error`, trusted proxies configured
+- [x] **Puzzle bank seeded** — 60 puzzles per difficulty scheduled from 2026-05-03
 - [ ] **Error pages** — custom 404 and 500 views
 - [ ] **Rate limiting** — protect session and complete endpoints from abuse
 - [ ] **Email verification** — enable Breeze's built-in verification so accounts are real

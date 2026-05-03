@@ -79,6 +79,32 @@ Visit `http://localhost:8000/sudoku`.
 
 ---
 
+## Production
+
+The app runs at **https://puzzlebox.brianjgoodwin.dev** on the development server.
+
+- **App process** — `puzzlebox.service` systemd user service (`php artisan serve --host=0.0.0.0 --port=8000`), enabled at boot via `loginctl enable-linger`.
+- **Reverse proxy** — Caddy (`~/developer/caddy-proxy`) handles TLS (Let's Encrypt via Cloudflare DNS challenge) and proxies to port 8000.
+- **Database** — MySQL 8.4 in Docker (`docker compose up mysql -d`).
+
+### Deploying updates
+
+```bash
+# 1. Pull latest code
+git pull
+
+# 2. Rebuild frontend assets (required any time Blade templates or CSS/JS change)
+npm run build
+
+# 3. Run any new migrations
+php artisan migrate --force
+
+# 4. Restart the app
+systemctl --user restart puzzlebox
+```
+
+---
+
 ## Local Debug Tools
 
 Set `SUDOKU_SOLVER_ENABLED=true` in `.env` to show a **Solve** button in-game that fills the board instantly. Useful for testing the completion flow. Never set this in production.

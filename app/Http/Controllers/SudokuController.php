@@ -5,19 +5,34 @@ namespace App\Http\Controllers;
 use App\Models\GameSession;
 use App\Models\Puzzle;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class SudokuController extends Controller
 {
-    public function index(): RedirectResponse
+    public function index(): View
     {
-        $puzzle = Puzzle::where('type', 'sudoku')->inRandomOrder()->first();
+        $difficulties = ['debug', 'easy', 'medium', 'hard', 'expert'];
+        $today = now()->toDateString();
 
-        abort_unless($puzzle, 404, 'No Sudoku puzzles available yet. Run: php artisan puzzle:generate easy');
+        $puzzles = [];
+        foreach ($difficulties as $difficulty) {
+            // Prefer today's scheduled puzzle; fall back to a random unscheduled one.
+            $puzzle = Puzzle::where('type', 'sudoku')
+                ->where('difficulty', $difficulty)
+                ->where('publish_date', $today)
+                ->first();
 
-        return redirect()->route('sudoku.show', $puzzle);
+            $puzzle ??= Puzzle::where('type', 'sudoku')
+                ->where('difficulty', $difficulty)
+                ->whereNull('publish_date')
+                ->inRandomOrder()
+                ->first();
+
+            $puzzles[$difficulty] = $puzzle;
+        }
+
+        return view('sudoku.index', compact('puzzles'));
     }
 
     public function show(Puzzle $puzzle): View
@@ -33,7 +48,9 @@ class SudokuController extends Controller
      */
     public function startSession(Request $request, Puzzle $puzzle): JsonResponse
     {
-        $request->validate(['session_token' => 'required|string|max:64']);
+        abort_if($puzzle->type !== 'sudoku', 404);
+
+        $request->validate(['session_token' => 'required|uuid']);
 
         $token = $request->input('session_token');
 
@@ -63,6 +80,7 @@ class SudokuController extends Controller
             'board_state'     => $session->board_state,
             'elapsed_seconds' => $session->elapsed_seconds,
             'mistakes'        => $session->mistakes,
+            'hints_used'      => $session->hints_used,
         ]);
     }
 
@@ -72,7 +90,7 @@ class SudokuController extends Controller
     public function saveSession(Request $request, GameSession $session): JsonResponse
     {
         $data = $request->validate([
-            'session_token'              => 'required|string|max:64',
+            'session_token'              => 'required|uuid',
             'board_state'                => 'required|array',
             'board_state.cells'          => 'required|array|size:81',
             'board_state.notes'          => 'required|array|size:81',
@@ -81,6 +99,7 @@ class SudokuController extends Controller
         ]);
 
         $this->authorizeSession($session, $data['session_token']);
+        abort_if($session->is_completed, 409);
 
         $session->update([
             'board_state'     => $data['board_state'],
@@ -98,7 +117,7 @@ class SudokuController extends Controller
     public function completeSession(Request $request, GameSession $session): JsonResponse
     {
         $data = $request->validate([
-            'session_token'     => 'required|string|max:64',
+            'session_token'     => 'required|uuid',
             'board_state'       => 'required|array',
             'board_state.cells' => 'required|array|size:81',
             'board_state.notes' => 'required|array|size:81',
@@ -107,6 +126,7 @@ class SudokuController extends Controller
         ]);
 
         $this->authorizeSession($session, $data['session_token']);
+        abort_if($session->is_completed, 409);
 
         $submitted = $data['board_state']['cells'];
         $solution  = $session->puzzle->solution_data;
@@ -131,10 +151,9 @@ class SudokuController extends Controller
             ]);
         }
 
-        $session->update([
-            'is_completed' => true,
-            'completed_at' => now(),
-        ]);
+        $session->is_completed = true;
+        $session->completed_at = now();
+        $session->save();
 
         return response()->json([
             'ok'   => true,
@@ -146,10 +165,78 @@ class SudokuController extends Controller
         ]);
     }
 
+    /**
+     * Reveal one correct cell value.
+     * Prefers the player's selected cell (if empty/wrong); falls back to a random one.
+     * Increments hints_used on the session. Capped at config('puzzlebox.max_hints').
+     */
+    public function hintSession(Request $request, GameSession $session): JsonResponse
+    {
+        $data = $request->validate([
+            'session_token' => 'required|uuid',
+            'cells'         => 'required|array|size:81',
+            'selected'      => 'nullable|integer|min:0|max:80',
+        ]);
+
+        $this->authorizeSession($session, $data['session_token']);
+        abort_if($session->is_completed, 409);
+
+        $maxHints = config('puzzlebox.max_hints');
+        if ($maxHints !== null && $session->hints_used >= $maxHints) {
+            return response()->json(['ok' => false, 'message' => 'Hint limit reached.'], 422);
+        }
+
+        $solution = $session->puzzle->solution_data;
+        $cells    = $data['cells'];
+        $selected = $data['selected'];
+
+        // Build list of cells that are empty or wrong.
+        $hintable = [];
+        foreach ($cells as $i => $val) {
+            if ($val !== $solution[$i]) {
+                $hintable[] = $i;
+            }
+        }
+
+        if (empty($hintable)) {
+            return response()->json(['ok' => false, 'message' => 'No cells to hint.'], 422);
+        }
+
+        // Use the selected cell if it's hintable, otherwise pick randomly.
+        $index = ($selected !== null && in_array($selected, $hintable, true))
+            ? $selected
+            : $hintable[array_rand($hintable)];
+
+        $session->increment('hints_used');
+
+        return response()->json([
+            'ok'    => true,
+            'index' => $index,
+            'value' => $solution[$index],
+        ]);
+    }
+
+    /**
+     * Return the full solution for a session — local debug tool only.
+     * Gated by SUDOKU_SOLVER_ENABLED in .env (never set in production).
+     */
+    public function solveSession(Request $request, GameSession $session): JsonResponse
+    {
+        abort_unless(config('puzzlebox.sudoku_solver_enabled'), 404);
+
+        $request->validate(['session_token' => 'required|uuid']);
+        $this->authorizeSession($session, $request->input('session_token'));
+
+        return response()->json([
+            'solution' => $session->puzzle->solution_data,
+        ]);
+    }
+
     private function authorizeSession(GameSession $session, string $token): void
     {
         $authorized = auth()->check()
-            ? $session->user_id === auth()->id() || $session->session_token === $token
+            ? $session->user_id === auth()->id() ||
+              ($session->user_id === null && $session->session_token === $token)
             : $session->session_token === $token;
 
         abort_unless($authorized, 403);

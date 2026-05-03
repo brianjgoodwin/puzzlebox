@@ -9,8 +9,7 @@ class GameSession extends Model
 {
     protected $fillable = [
         'puzzle_id', 'user_id', 'session_token',
-        'board_state', 'hints_used', 'mistakes',
-        'elapsed_seconds', 'is_completed', 'completed_at',
+        'board_state', 'hints_used', 'mistakes', 'elapsed_seconds',
     ];
 
     protected $casts = [

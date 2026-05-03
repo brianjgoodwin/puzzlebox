@@ -9,6 +9,8 @@ class Puzzle extends Model
 {
     protected $fillable = ['type', 'difficulty', 'puzzle_data', 'solution_data', 'publish_date'];
 
+    protected $hidden = ['solution_data'];
+
     protected $casts = [
         'puzzle_data' => 'array',
         'solution_data' => 'array',

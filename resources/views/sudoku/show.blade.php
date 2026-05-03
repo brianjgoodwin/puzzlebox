@@ -6,6 +6,7 @@
             </h2>
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
                 {{ match($puzzle->difficulty) {
+                    'debug'  => 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
                     'easy'   => 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
                     'medium' => 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
                     'hard'   => 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
@@ -19,9 +20,10 @@
 
     @php
         $gameConfig = [
-            'id'         => $puzzle->id,
-            'difficulty' => $puzzle->difficulty,
-            'puzzle'     => $puzzle->puzzle_data,
+            'id'           => $puzzle->id,
+            'difficulty'   => $puzzle->difficulty,
+            'puzzle'       => $puzzle->puzzle_data,
+            'solverEnabled' => config('puzzlebox.sudoku_solver_enabled'),
         ];
     @endphp
 
@@ -31,6 +33,15 @@
         x-init="init()"
     >
         <div class="max-w-lg mx-auto px-4 space-y-6">
+
+            {{-- Session error banner --}}
+            <div
+                x-show="sessionError"
+                x-cloak
+                class="rounded-lg bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-300 text-center"
+            >
+                Could not connect to the server. Progress won't be saved — try refreshing the page.
+            </div>
 
             {{-- Timer + status bar --}}
             <div class="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
@@ -107,23 +118,23 @@
                     </button>
                 </div>
 
-                {{-- Number pad --}}
-                <div class="grid grid-cols-9 gap-1">
-                    @for ($n = 1; $n <= 9; $n++)
+                {{-- Number pad — 3×3 grid in numpad order (7–9 top, 1–3 bottom) --}}
+                <div class="grid grid-cols-3 gap-1 max-w-[168px] mx-auto">
+                    @foreach ([7, 8, 9, 4, 5, 6, 1, 2, 3] as $n)
                         <button
                             @click="enterValue({{ $n }})"
-                            class="h-10 sm:h-11 rounded font-semibold text-base
+                            class="h-12 sm:h-14 rounded font-semibold text-lg
                                    bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200
                                    border border-gray-300 dark:border-gray-600
                                    hover:bg-blue-50 dark:hover:bg-blue-900/30
                                    active:bg-blue-100 dark:active:bg-blue-900/50
                                    transition-colors"
                         >{{ $n }}</button>
-                    @endfor
+                    @endforeach
                 </div>
 
-                {{-- Erase --}}
-                <div class="flex justify-center">
+                {{-- Erase, Hint, Solve --}}
+                <div class="flex justify-center gap-3">
                     <button
                         @click="clearCell()"
                         class="px-6 py-1.5 text-sm font-medium rounded-full
@@ -134,6 +145,32 @@
                     >
                         Erase
                     </button>
+
+                    <button
+                        @click="hint()"
+                        :disabled="complete || hinting"
+                        class="px-6 py-1.5 text-sm font-medium rounded-full
+                               bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300
+                               border border-gray-300 dark:border-gray-600
+                               hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:text-amber-600
+                               disabled:opacity-40 disabled:cursor-not-allowed
+                               transition-colors"
+                    >
+                        Hint<span x-show="hintsUsed > 0" x-text="` (${hintsUsed})`"></span>
+                    </button>
+
+                    <template x-if="solverEnabled">
+                        <button
+                            @click="solve()"
+                            class="px-6 py-1.5 text-sm font-medium rounded-full
+                                   bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300
+                                   border border-gray-300 dark:border-gray-600
+                                   hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:text-purple-600
+                                   transition-colors"
+                        >
+                            Solve
+                        </button>
+                    </template>
                 </div>
             </div>
 
@@ -155,7 +192,7 @@
                     {{ ucfirst($puzzle->difficulty) }} &mdash; #{{ $puzzle->id }}
                 </p>
 
-                <dl class="grid grid-cols-2 gap-4 mb-8">
+                <dl class="grid grid-cols-3 gap-4 mb-8">
                     <div class="bg-gray-50 dark:bg-gray-700 rounded-xl p-4">
                         <dt class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Time</dt>
                         <dd class="text-2xl font-mono font-bold text-gray-900 dark:text-gray-100"
@@ -165,6 +202,11 @@
                         <dt class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Mistakes</dt>
                         <dd class="text-2xl font-bold text-gray-900 dark:text-gray-100"
                             x-text="stats ? stats.mistakes : 0"></dd>
+                    </div>
+                    <div class="bg-gray-50 dark:bg-gray-700 rounded-xl p-4">
+                        <dt class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Hints</dt>
+                        <dd class="text-2xl font-bold text-gray-900 dark:text-gray-100"
+                            x-text="stats ? stats.hints_used : 0"></dd>
                     </div>
                 </dl>
 

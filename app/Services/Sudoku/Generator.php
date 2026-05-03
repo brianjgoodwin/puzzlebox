@@ -23,6 +23,7 @@ class Generator
      * would be violated — so the actual count may be slightly higher.
      */
     private const CLUE_TARGETS = [
+        'debug'  => 78, // Only 3 blank cells — for testing
         'easy'   => 46,
         'medium' => 34,
         'hard'   => 28,

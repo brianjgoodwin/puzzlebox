@@ -24,5 +24,7 @@ Route::get('/sudoku/{puzzle}', [SudokuController::class, 'show'])->name('sudoku.
 Route::post('/sudoku/{puzzle}/session', [SudokuController::class, 'startSession'])->name('sudoku.session.start');
 Route::patch('/sudoku/sessions/{session}', [SudokuController::class, 'saveSession'])->name('sudoku.session.save');
 Route::post('/sudoku/sessions/{session}/complete', [SudokuController::class, 'completeSession'])->name('sudoku.session.complete');
+Route::post('/sudoku/sessions/{session}/solve', [SudokuController::class, 'solveSession'])->name('sudoku.session.solve');
+Route::post('/sudoku/sessions/{session}/hint', [SudokuController::class, 'hintSession'])->name('sudoku.session.hint');
 
 require __DIR__.'/auth.php';

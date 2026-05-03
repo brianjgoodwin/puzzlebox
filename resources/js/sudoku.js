@@ -1,9 +1,10 @@
 export function sudokuGame(config) {
     return {
         // --- Static puzzle data --------------------------------------------------
-        puzzleId:   config.id,
-        difficulty: config.difficulty,
-        given:      config.puzzle.map(v => v !== null), // which cells are clues
+        puzzleId:      config.id,
+        difficulty:    config.difficulty,
+        given:         config.puzzle.map(v => v !== null), // which cells are clues
+        solverEnabled: config.solverEnabled ?? false,
 
         // --- Cell state (81 elements) --------------------------------------------
         // Each: { value: null|1-9, notes: int[] }
@@ -17,13 +18,17 @@ export function sudokuGame(config) {
         // --- Game state ----------------------------------------------------------
         conflicts:   [],        // indices of cells currently in conflict
         wrongCells:  [],        // indices the server flagged as wrong
+        hintCells:   [],        // indices revealed by hints
         mistakes:    0,         // total erroneous entries this session
+        hintsUsed:   0,
+        hinting:     false,
         complete:    false,
         stats:       null,      // filled on completion
 
         // --- Session -------------------------------------------------------------
         sessionId:    null,
         sessionToken: null,
+        sessionError: false,
         saveTimer:    null,
 
         // --- Timer ---------------------------------------------------------------
@@ -53,22 +58,31 @@ export function sudokuGame(config) {
         // --- Session API ---------------------------------------------------------
 
         async startSessionRequest() {
-            const res = await this.post(`/sudoku/${this.puzzleId}/session`, {
-                session_token: this.sessionToken,
-            });
-            const data = await res.json();
+            try {
+                const res = await this.post(`/sudoku/${this.puzzleId}/session`, {
+                    session_token: this.sessionToken,
+                });
 
-            this.sessionId = data.session_id;
-            this.elapsed   = data.elapsed_seconds ?? 0;
-            this.mistakes  = data.mistakes ?? 0;
+                if (!res.ok) throw new Error(`Session start failed: ${res.status}`);
 
-            // Restore saved board state (may differ from the original puzzle if resuming).
-            if (data.board_state?.cells) {
-                this.cells = data.board_state.cells.map((v, i) => ({
-                    value: v,
-                    notes: data.board_state.notes?.[i] ?? [],
-                }));
-                this.checkConflicts();
+                const data = await res.json();
+
+                this.sessionId  = data.session_id;
+                this.elapsed    = data.elapsed_seconds ?? 0;
+                this.mistakes   = data.mistakes ?? 0;
+                this.hintsUsed  = data.hints_used ?? 0;
+
+                // Restore saved board state (may differ from the original puzzle if resuming).
+                if (data.board_state?.cells) {
+                    this.cells = data.board_state.cells.map((v, i) => ({
+                        value: v,
+                        notes: data.board_state.notes?.[i] ?? [],
+                    }));
+                    this.checkConflicts();
+                }
+            } catch (e) {
+                console.error('Failed to start session:', e);
+                this.sessionError = true;
             }
         },
 
@@ -127,13 +141,10 @@ export function sudokuGame(config) {
             const cell = this.cells[this.selected];
 
             if (this.notesMode) {
-                cell.value = null; // can't have value and notes simultaneously
-                const idx = cell.notes.indexOf(num);
-                if (idx === -1) {
-                    cell.notes = [...cell.notes, num].sort((a, b) => a - b);
-                } else {
-                    cell.notes = cell.notes.filter(n => n !== num);
-                }
+                const notes = cell.notes.includes(num)
+                    ? cell.notes.filter(n => n !== num)
+                    : [...cell.notes, num].sort((a, b) => a - b);
+                this.cells[this.selected] = { value: null, notes };
                 this.scheduleSave();
                 return;
             }
@@ -144,8 +155,7 @@ export function sudokuGame(config) {
                 return;
             }
 
-            cell.value  = num;
-            cell.notes  = [];
+            this.cells[this.selected] = { value: num, notes: [] };
             this.highlightValue = num;
 
             const wasConflict = this.checkConflicts();
@@ -160,11 +170,11 @@ export function sudokuGame(config) {
 
             const cell = this.cells[this.selected];
             if (cell.value !== null) {
-                cell.value          = null;
+                this.cells[this.selected] = { value: null, notes: cell.notes };
                 this.highlightValue = null;
                 this.checkConflicts();
             } else {
-                cell.notes = [];
+                this.cells[this.selected] = { value: null, notes: [] };
             }
             this.scheduleSave();
         },
@@ -250,6 +260,7 @@ export function sudokuGame(config) {
         cellClasses(index) {
             const cell        = this.cells[index];
             const isGiven     = this.given[index];
+            const isHint      = this.hintCells.includes(index);
             const isSelected  = this.selected === index;
             const isConflict  = this.conflicts.includes(index);
             const isWrong     = this.wrongCells.includes(index);
@@ -263,12 +274,14 @@ export function sudokuGame(config) {
                 'bg-white dark:bg-gray-800':                  !isSelected && !isRelated && !isSameVal,
 
                 // Text / value colour
-                'font-bold text-gray-900 dark:text-gray-100': isGiven && !isConflict && !isWrong,
+                'font-bold text-gray-900 dark:text-gray-100': isGiven && !isHint && !isConflict && !isWrong,
+                'font-bold text-amber-500 dark:text-amber-400': isHint && !isConflict && !isWrong,
                 'text-blue-600 dark:text-blue-400':           !isGiven && !isConflict && !isWrong && cell.value !== null,
                 'text-red-500 dark:text-red-400':             isConflict || isWrong,
 
-                // Interaction
-                'cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30': !isSelected,
+                // Interaction — only show hover highlight on cells the player can actually edit
+                'cursor-pointer': true,
+                'hover:bg-blue-50 dark:hover:bg-blue-900/30': !isSelected && !isRelated && !isSameVal,
             };
         },
 
@@ -293,6 +306,59 @@ export function sudokuGame(config) {
             const m = Math.floor(s / 60).toString().padStart(2, '0');
             const sec = (s % 60).toString().padStart(2, '0');
             return `${m}:${sec}`;
+        },
+
+        // --- Hint ----------------------------------------------------------------
+
+        async hint() {
+            if (!this.sessionId || this.complete || this.hinting) return;
+            this.hinting = true;
+
+            try {
+                const res  = await this.post(`/sudoku/sessions/${this.sessionId}/hint`, {
+                    session_token: this.sessionToken,
+                    cells:         this.cells.map(c => c.value),
+                    selected:      this.selected,
+                });
+
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!data.ok) return;
+
+                this.cells[data.index] = { value: data.value, notes: [] };
+                this.given[data.index] = true; // lock it — hints can't be erased
+                this.hintCells = [...this.hintCells, data.index];
+                this.hintsUsed++;
+
+                this.highlightValue = data.value;
+                this.selected       = data.index;
+                this.wrongCells     = this.wrongCells.filter(i => i !== data.index);
+                this.checkConflicts();
+                this.checkComplete();
+            } finally {
+                this.hinting = false;
+            }
+        },
+
+        // --- Solver (local debug only) -------------------------------------------
+
+        async solve() {
+            if (!this.sessionId || this.complete) return;
+
+            const res  = await this.post(`/sudoku/sessions/${this.sessionId}/solve`, {
+                session_token: this.sessionToken,
+            });
+            const data = await res.json();
+
+            data.solution.forEach((val, i) => {
+                if (!this.given[i]) {
+                    this.cells[i] = { value: val, notes: [] };
+                }
+            });
+
+            this.wrongCells = [];
+            this.checkConflicts();
+            this.checkComplete();
         },
 
         // --- Fetch helpers -------------------------------------------------------

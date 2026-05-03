@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('puzzles', function (Blueprint $table) {
             $table->id();
             $table->enum('type', ['sudoku', 'cryptogram', 'kenken'])->index();
-            $table->enum('difficulty', ['easy', 'medium', 'hard', 'expert']);
+            $table->enum('difficulty', ['debug', 'easy', 'medium', 'hard', 'expert']);
             $table->json('puzzle_data');   // starting state (nulls = blanks for sudoku)
             $table->json('solution_data'); // complete solved state
             $table->date('publish_date')->nullable()->unique(); // for daily puzzle concept

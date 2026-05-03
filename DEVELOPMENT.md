@@ -71,7 +71,7 @@ puzzlebox/
 │   ├── Http/Controllers/
 │   │   ├── Auth/                   # Breeze auth controllers
 │   │   ├── ProfileController.php
-│   │   └── SudokuController.php    # Game routes: show, session start/save/complete
+│   │   └── SudokuController.php    # Game routes: index, show, session start/save/hint/complete/solve
 │   ├── Models/
 │   │   ├── GameSession.php         # Tracks a play session (anonymous or authed)
 │   │   ├── Puzzle.php              # Puzzle definitions and solutions
@@ -84,7 +84,8 @@ puzzlebox/
 │   └── migrations/
 │       ├── ..._create_users_table.php
 │       ├── ..._create_puzzles_table.php
-│       └── ..._create_game_sessions_table.php
+│       ├── ..._create_game_sessions_table.php
+│       └── ..._add_debug_difficulty_to_puzzles_table.php
 ├── docker/
 │   └── 8.4/                        # Custom Dockerfile (not used in local dev)
 ├── resources/
@@ -97,7 +98,8 @@ puzzlebox/
 │       │   ├── app.blade.php
 │       │   └── navigation.blade.php  # Handles guest and auth nav states
 │       └── sudoku/
-│           └── show.blade.php      # 9×9 board, number pad, completion modal
+│           ├── index.blade.php     # Daily puzzle landing page — four difficulty cards
+│           └── show.blade.php      # 9×9 board, number pad, hint, completion modal
 ├── tests/
 │   └── Unit/Services/Sudoku/
 │       ├── GeneratorTest.php       # 20 tests across all 4 difficulties
@@ -115,7 +117,7 @@ puzzlebox/
 |--------|------|-------|
 | `id` | bigint | Primary key |
 | `type` | enum | `sudoku`, `cryptogram`, `kenken` |
-| `difficulty` | enum | `easy`, `medium`, `hard`, `expert` |
+| `difficulty` | enum | `debug`, `easy`, `medium`, `hard`, `expert` |
 | `puzzle_data` | json | Starting state. For Sudoku: 81-element array, `null` = blank cell |
 | `solution_data` | json | Complete solved state — never sent to the client |
 | `publish_date` | date | Optional. Unique — enables a "daily puzzle" feature |
@@ -154,12 +156,13 @@ Puzzles are pre-generated and stored in the database. Generation uses a two-phas
 
 **Target clue counts by difficulty:**
 
-| Difficulty | Target clues | Cells removed |
-|------------|-------------|---------------|
-| Easy | ~46 | ~35 |
-| Medium | ~34 | ~47 |
-| Hard | ~28 | ~53 |
-| Expert | ~24 | ~57 |
+| Difficulty | Target clues | Cells removed | Notes |
+|------------|-------------|---------------|-------|
+| Debug | ~78 | ~3 | Local testing only |
+| Easy | ~46 | ~35 | |
+| Medium | ~34 | ~47 | |
+| Hard | ~28 | ~53 | |
+| Expert | ~24 | ~57 | |
 
 ### Generating puzzles
 
@@ -169,30 +172,53 @@ php artisan puzzle:generate easy
 
 # Generate a batch
 php artisan puzzle:generate hard --count=10
+
+# Generate and schedule (assigns sequential publish_date values)
+php artisan puzzle:generate hard --count=10 --schedule
 ```
 
 Valid difficulties: `easy`, `medium`, `hard`, `expert`. Puzzles are added to the `puzzles` table and immediately available to players.
+
+The `--schedule` flag assigns sequential `publish_date` values starting the day after the last scheduled puzzle for that difficulty (or today if none exist). Each difficulty's schedule is independent.
+
+`debug` is also a valid difficulty (only 3 blank cells) but should not be generated on the production server.
+
+### Initial puzzle bank seeding (production)
+
+Run once on the remote server to seed ~60 days of puzzles per difficulty:
+
+```bash
+php artisan puzzle:generate easy   --count=60 --schedule
+php artisan puzzle:generate medium --count=60 --schedule
+php artisan puzzle:generate hard   --count=60 --schedule
+php artisan puzzle:generate expert --count=60 --schedule
+```
+
+Expert puzzles take the longest to generate — allow a few minutes. To top up the bank later, run the same commands again with the desired count; the schedule will extend from where it left off.
 
 ---
 
 ## Sudoku Game Flow
 
-1. `GET /sudoku` — shows today's puzzle for each difficulty (daily puzzle landing page). Currently redirects to a random puzzle as a placeholder.
+1. `GET /sudoku` — landing page showing today's puzzle for each difficulty. Prefers a puzzle with a matching `publish_date`; falls back to a random unscheduled puzzle if none exists.
 2. `GET /sudoku/{puzzle}` — renders the board; puzzle data (no solution) embedded in the page via `@js()`.
 3. On load, Alpine calls `POST /sudoku/{puzzle}/session` with the browser's `session_token`. The server finds an existing incomplete session or creates a new one and returns the saved board state.
 4. As the player fills cells, conflicts are highlighted client-side (same row/column/box check).
 5. Board state is autosaved via `PATCH /sudoku/sessions/{session}` after a 4-second debounce.
-6. When all 81 cells are filled with no visible conflicts, Alpine calls `POST /sudoku/sessions/{session}/complete`. The server compares against the stored solution and returns either success (with stats) or a list of wrong cell indices (without revealing the correct values).
+6. The player can request a hint at any time via `POST /sudoku/sessions/{session}/hint`. The server reveals one correct cell value (preferring the selected cell if empty/wrong, otherwise random) and increments `hints_used`. Hint cells are locked and rendered in amber.
+7. When all 81 cells are filled with no visible conflicts, Alpine calls `POST /sudoku/sessions/{session}/complete`. The server compares against the stored solution and returns either success (with stats) or a list of wrong cell indices (without revealing the correct values).
 
 ### Sudoku routes
 
 | Method | Path | Action |
 |--------|------|--------|
-| GET | `/sudoku` | Redirect to a random puzzle |
+| GET | `/sudoku` | Landing page — today's puzzle per difficulty |
 | GET | `/sudoku/{puzzle}` | Show the game board |
 | POST | `/sudoku/{puzzle}/session` | Start or resume a session |
 | PATCH | `/sudoku/sessions/{session}` | Autosave board state |
+| POST | `/sudoku/sessions/{session}/hint` | Reveal one correct cell |
 | POST | `/sudoku/sessions/{session}/complete` | Validate and complete |
+| POST | `/sudoku/sessions/{session}/solve` | Fill entire board (local debug only — gated by `SUDOKU_SOLVER_ENABLED`) |
 
 ---
 
@@ -239,17 +265,17 @@ The project ships games one at a time. Sudoku goes live before Cryptogram is sta
 The game engine is built. This phase finishes the player-facing experience.
 
 - [x] Puzzle generation service (`Solver`, `Generator`)
-- [x] `puzzle:generate` artisan command
+- [x] `puzzle:generate` artisan command (with `--schedule` flag)
 - [x] Database schema (`puzzles`, `game_sessions`)
 - [x] Game controller and routes
 - [x] Interactive board — cell selection, keyboard nav, conflict detection, notes mode
 - [x] Session persistence — autosave, resume, anonymous + auth support
 - [x] Server-side solution validation
-- [x] Completion modal with time and mistakes
-- [ ] **Browser testing and bug fixes** — first play in a real browser
-- [ ] **Daily puzzle infrastructure** — assign `publish_date` values to puzzles; `/sudoku` shows today's puzzle by difficulty rather than a random redirect
-- [ ] **Puzzle bank seeding** — generate and date-assign ~50–100 puzzles per difficulty into the future
-- [ ] **Hint system** — reveal one correct cell on request; cost tracked in `hints_used`
+- [x] Completion modal with time, mistakes, and hints
+- [x] Browser testing and bug fixes
+- [x] Daily puzzle infrastructure — `/sudoku` landing page shows today's puzzle per difficulty; falls back to random unscheduled puzzle
+- [x] Puzzle bank seeding — 60 puzzles per difficulty scheduled on the production server
+- [x] Hint system — reveals one correct cell (selected cell preferred); amber visual indicator; tracked in `hints_used`
 - [ ] **Activity heatmap** — calendar-style view of days played (data already in `completed_at`); shown on the user profile page
 - [ ] **User game history** — list of past completed games with time, mistakes, and hints used
 - [ ] **Open decision: free-play mode** — whether players can generate or access additional puzzles beyond today's. Affects the puzzle picker UI design.

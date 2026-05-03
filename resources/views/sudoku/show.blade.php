@@ -30,7 +30,6 @@
     <div
         class="py-8"
         x-data="sudokuGame(@js($gameConfig))"
-        x-init="init()"
     >
         <div class="max-w-lg mx-auto px-4 space-y-6">
 
@@ -43,15 +42,49 @@
                 Could not connect to the server. Progress won't be saved — try refreshing the page.
             </div>
 
-            {{-- Timer + status bar --}}
+            {{-- Status bar: timer | progress | mistakes --}}
             <div class="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
-                <span class="font-mono text-lg font-semibold" x-text="formatTime(elapsed)">00:00</span>
-                <span x-show="mistakes > 0" x-cloak>
-                    Mistakes: <span x-text="mistakes" class="font-semibold text-red-500"></span>
-                </span>
-                <template x-if="wrongCells.length > 0">
-                    <span class="text-red-500 text-xs font-medium">Something's not right — keep looking</span>
-                </template>
+
+                {{-- Left: timer + hide/show toggle --}}
+                <div class="flex items-center gap-1.5">
+                    <span
+                        x-show="!timerHidden"
+                        class="font-mono text-lg font-semibold tabular-nums"
+                        x-text="formatTime(elapsed)"
+                    >00:00</span>
+                    <span
+                        x-show="timerHidden"
+                        class="font-mono text-lg font-semibold text-gray-300 dark:text-gray-600"
+                        aria-hidden="true"
+                    >--:--</span>
+                    <button
+                        @click="toggleTimer()"
+                        class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                        :aria-label="timerHidden ? 'Show timer' : 'Hide timer'"
+                        x-text="timerHidden ? 'Show' : 'Hide'"
+                    ></button>
+                </div>
+
+                {{-- Center: progress --}}
+                <span class="tabular-nums text-gray-500 dark:text-gray-400"
+                      x-text="`${filledCount()} of 81`"></span>
+
+                {{-- Right: mistakes --}}
+                <div class="text-right min-w-[5rem]">
+                    <span x-show="mistakes > 0" x-cloak>
+                        Mistakes: <span x-text="mistakes" class="font-semibold text-red-500"></span>
+                    </span>
+                </div>
+
+            </div>
+
+            {{-- Wrong cells message (separate row so it doesn't disrupt the status bar layout) --}}
+            <div
+                x-show="wrongCells.length > 0"
+                x-cloak
+                class="text-center text-red-500 text-xs font-medium -mt-3"
+            >
+                Something's not right — keep looking
             </div>
 
             {{-- Board --}}
@@ -133,8 +166,21 @@
                     @endforeach
                 </div>
 
-                {{-- Erase, Hint, Solve --}}
-                <div class="flex justify-center gap-3">
+                {{-- Undo, Erase, Hint, Solve --}}
+                <div class="flex justify-center gap-3 flex-wrap">
+                    <button
+                        @click="undo()"
+                        :disabled="history.length === 0 || complete"
+                        class="px-6 py-1.5 text-sm font-medium rounded-full
+                               bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300
+                               border border-gray-300 dark:border-gray-600
+                               hover:bg-gray-50 dark:hover:bg-gray-700/50
+                               disabled:opacity-40 disabled:cursor-not-allowed
+                               transition-colors"
+                    >
+                        Undo
+                    </button>
+
                     <button
                         @click="clearCell()"
                         class="px-6 py-1.5 text-sm font-medium rounded-full
@@ -180,11 +226,21 @@
         <div
             x-show="complete"
             x-cloak
+            x-transition:enter="transition ease-out duration-300"
+            x-transition:enter-start="opacity-0"
+            x-transition:enter-end="opacity-100"
             class="fixed inset-0 flex items-center justify-center z-50"
         >
             <div class="absolute inset-0 bg-black/50 backdrop-blur-sm"></div>
 
-            <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 mx-4 max-w-sm w-full text-center">
+            <div
+                x-show="complete"
+                x-transition:enter="transition ease-out duration-500"
+                x-transition:enter-start="opacity-0 scale-90"
+                x-transition:enter-end="opacity-100 scale-100"
+                style="transition-delay: 100ms"
+                class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 mx-4 max-w-sm w-full text-center"
+            >
                 <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">
                     Puzzle solved!
                 </h2>
@@ -199,7 +255,7 @@
                             x-text="stats ? formatTime(stats.elapsed_seconds) : '--:--'"></dd>
                     </div>
                     <div class="bg-gray-50 dark:bg-gray-700 rounded-xl p-4">
-                        <dt class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Mistakes</dt>
+                        <dt class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Corrections</dt>
                         <dd class="text-2xl font-bold text-gray-900 dark:text-gray-100"
                             x-text="stats ? stats.mistakes : 0"></dd>
                     </div>

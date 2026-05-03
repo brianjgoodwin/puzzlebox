@@ -82,10 +82,13 @@ The app is live at **https://puzzlebox.brianjgoodwin.dev**.
 git pull
 npm run build                  # always rebuild when Blade or CSS/JS files change
 php artisan migrate --force    # if there are new migrations
+php artisan optimize           # rebuilds route + config caches
 systemctl --user restart puzzlebox
 ```
 
 **Important:** Always run `npm run build` after pulling — Tailwind's production build only includes classes found in the source files at build time. Skipping it will cause missing styles.
+
+**Important:** Always run `php artisan optimize` after pulling — Laravel caches routes and config at deploy time. A stale route cache will silently 404 any routes added since the last cache rebuild.
 
 ### Networking note
 
@@ -321,6 +324,34 @@ The game engine is built. This phase finishes the player-facing experience.
 - [ ] **Activity heatmap** — calendar-style view of days played (data already in `completed_at`); shown on the user profile page
 - [ ] **User game history** — list of past completed games with time, mistakes, and hints used
 - [ ] **Open decision: free-play mode** — whether players can generate or access additional puzzles beyond today's. Affects the puzzle picker UI design.
+
+#### Already implemented (noted here to avoid re-work)
+
+- [x] **Conflict highlighting** — `checkConflicts()` runs synchronously inside `enterValue()`; clashing cells turn red immediately
+- [x] **Keyboard navigation** — `handleKey()` handles arrow keys (move between cells), 1–9 (enter value), Backspace/Delete/0 (clear)
+
+#### Sudoku UX — Batch 1 (Alpine/JS only, no server changes)
+
+- [x] **Progress indicator** — "37 of 81 filled" counter computed from cell state; displayed in the status bar
+- [x] **Hideable timer** — toggle to hide the clock without stopping it; preference persisted to `localStorage`
+- [x] **localStorage board backup** — write board state to `localStorage` on every save; restore it if the session API fails on load, so a refresh never wipes progress
+- [x] **Auto-remove pencil marks** — when a number is confirmed in a cell, remove that value from notes in every cell in the same row, column, and box
+- [x] **Undo button** — maintain a history stack in Alpine state; each `enterValue()` and `clearCell()` pushes a snapshot; Undo pops and restores
+- [x] **Completion celebration** — subtle CSS animation on the completion modal (e.g. fade-in scale, or lightweight confetti); rewarding without being jarring
+
+#### Sudoku UX — Batch 2 (template + minor JS)
+
+- [ ] **Hide debug difficulty on production** — filter it out in `SudokuController::index()` when `APP_ENV=production`
+- [ ] **Remove live mistakes counter** — the in-game "Mistakes: N" label is discouraging; remove it from the board view and keep it only in the completion stats
+- [ ] **Larger cells on mobile** — increase cell size from `w-10 h-10` to `w-11 h-11 sm:w-12 sm:h-12` for better touch targets
+- [ ] **"Back to puzzles" link** — add clear navigation from the game page back to the difficulty selector; players shouldn't need the browser back button
+- [x] **Positive completion framing** — relabel "Mistakes" in the stats modal to "Corrections" (or remove the label entirely); frame completion as an achievement
+- [ ] **High-contrast / large-print mode** — toggle that applies larger fonts and stronger contrast; preference persisted to `localStorage`
+- [ ] **Print-friendly CSS** — `@media print` stylesheet that renders a clean, ink-friendly board
+
+#### Sudoku UX — Batch 3 (new server endpoint)
+
+- [ ] **Check puzzle button** — new `POST /sudoku/sessions/{session}/check` endpoint that compares submitted cells against the stored solution and returns wrong cell indices, without modifying the session or marking it complete; wired to a "Check" button in the UI
 
 ---
 

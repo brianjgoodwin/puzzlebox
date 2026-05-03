@@ -24,6 +24,7 @@ export function sudokuGame(config) {
         hinting:     false,
         complete:    false,
         stats:       null,      // filled on completion
+        history:     [],        // cell snapshots for undo; capped at 50
 
         // --- Session -------------------------------------------------------------
         sessionId:    null,
@@ -34,11 +35,18 @@ export function sudokuGame(config) {
         // --- Timer ---------------------------------------------------------------
         elapsed:       0,
         timerInterval: null,
+        timerHidden:   false,   // persisted to localStorage
 
         // =========================================================================
 
         init() {
             this.sessionToken = this.getOrCreateToken();
+
+            // Restore timer visibility preference before first render.
+            if (localStorage.getItem('puzzlebox_timer_hidden') === 'true') {
+                this.timerHidden = true;
+            }
+
             this.startSessionRequest();
             this.startTimer();
             document.addEventListener('keydown', e => this.handleKey(e));
@@ -80,13 +88,39 @@ export function sudokuGame(config) {
                     }));
                     this.checkConflicts();
                 }
+
+                // Server is authoritative — clear the local backup.
+                localStorage.removeItem(`puzzlebox_board_${this.puzzleId}`);
             } catch (e) {
                 console.error('Failed to start session:', e);
                 this.sessionError = true;
+
+                // Fall back to localStorage backup so a refresh doesn't wipe progress.
+                try {
+                    const raw = localStorage.getItem(`puzzlebox_board_${this.puzzleId}`);
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        if (Array.isArray(parsed.cells) && parsed.cells.length === 81) {
+                            this.cells = parsed.cells.map((v, i) => ({
+                                value: v,
+                                notes: parsed.notes?.[i] ?? [],
+                            }));
+                            this.checkConflicts();
+                        }
+                    }
+                } catch (_) {
+                    // Corrupt backup — silently ignore, existing puzzle_data remains.
+                }
             }
         },
 
         scheduleSave() {
+            // Write to localStorage immediately so a refresh never loses the last move.
+            localStorage.setItem(
+                `puzzlebox_board_${this.puzzleId}`,
+                JSON.stringify(this.serialiseBoard())
+            );
+
             clearTimeout(this.saveTimer);
             this.saveTimer = setTimeout(() => this.saveState(), 4000);
         },
@@ -141,6 +175,8 @@ export function sudokuGame(config) {
             const cell = this.cells[this.selected];
 
             if (this.notesMode) {
+                // Push snapshot before toggling a note.
+                this.pushHistory();
                 const notes = cell.notes.includes(num)
                     ? cell.notes.filter(n => n !== num)
                     : [...cell.notes, num].sort((a, b) => a - b);
@@ -150,12 +186,17 @@ export function sudokuGame(config) {
             }
 
             // Entering the same value a second time clears the cell.
+            // clearCell() will push its own history snapshot.
             if (cell.value === num) {
                 this.clearCell();
                 return;
             }
 
+            // Push snapshot before changing the cell value.
+            this.pushHistory();
+
             this.cells[this.selected] = { value: num, notes: [] };
+            this.clearRelatedNotes(this.selected, num);
             this.highlightValue = num;
 
             const wasConflict = this.checkConflicts();
@@ -170,12 +211,32 @@ export function sudokuGame(config) {
 
             const cell = this.cells[this.selected];
             if (cell.value !== null) {
+                this.pushHistory();
                 this.cells[this.selected] = { value: null, notes: cell.notes };
                 this.highlightValue = null;
                 this.checkConflicts();
-            } else {
+            } else if (cell.notes.length > 0) {
+                this.pushHistory();
                 this.cells[this.selected] = { value: null, notes: [] };
             }
+            this.scheduleSave();
+        },
+
+        // --- History / Undo ------------------------------------------------------
+
+        pushHistory() {
+            this.history.push(JSON.parse(JSON.stringify(this.cells)));
+            if (this.history.length > 50) this.history.shift();
+        },
+
+        undo() {
+            if (this.history.length === 0 || this.complete) return;
+
+            this.cells = this.history.pop();
+            this.highlightValue = this.selected !== null
+                ? this.cells[this.selected].value
+                : null;
+            this.checkConflicts();
             this.scheduleSave();
         },
 
@@ -219,6 +280,41 @@ export function sudokuGame(config) {
             return false;
         },
 
+        // --- Pencil mark helpers -------------------------------------------------
+
+        // After confirming a value in a cell, remove that number from notes of
+        // every cell in the same row, column, and box.
+        clearRelatedNotes(index, value) {
+            const ir = Math.floor(index / 9);
+            const ic = index % 9;
+
+            for (let i = 0; i < 81; i++) {
+                if (i === index) continue;
+                if (!this.cells[i].notes.includes(value)) continue;
+
+                const cr = Math.floor(i / 9);
+                const cc = i % 9;
+
+                const related = ir === cr ||
+                    ic === cc ||
+                    (Math.floor(ir / 3) === Math.floor(cr / 3) &&
+                     Math.floor(ic / 3) === Math.floor(cc / 3));
+
+                if (related) {
+                    this.cells[i] = {
+                        value: this.cells[i].value,
+                        notes: this.cells[i].notes.filter(n => n !== value),
+                    };
+                }
+            }
+        },
+
+        // --- Progress ------------------------------------------------------------
+
+        filledCount() {
+            return this.cells.filter(c => c.value !== null).length;
+        },
+
         // --- Completion ----------------------------------------------------------
 
         checkComplete() {
@@ -232,6 +328,13 @@ export function sudokuGame(config) {
         // --- Keyboard ------------------------------------------------------------
 
         handleKey(e) {
+            // Undo works regardless of selected cell; check before the selected guard.
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                e.preventDefault();
+                this.undo();
+                return;
+            }
+
             if (this.selected === null || this.complete) return;
 
             const arrows = { ArrowUp: -9, ArrowDown: 9, ArrowLeft: -1, ArrowRight: 1 };
@@ -308,6 +411,11 @@ export function sudokuGame(config) {
             return `${m}:${sec}`;
         },
 
+        toggleTimer() {
+            this.timerHidden = !this.timerHidden;
+            localStorage.setItem('puzzlebox_timer_hidden', this.timerHidden);
+        },
+
         // --- Hint ----------------------------------------------------------------
 
         async hint() {
@@ -329,6 +437,9 @@ export function sudokuGame(config) {
                 this.given[data.index] = true; // lock it — hints can't be erased
                 this.hintCells = [...this.hintCells, data.index];
                 this.hintsUsed++;
+
+                // Clear pencil marks for the revealed value in related cells.
+                this.clearRelatedNotes(data.index, data.value);
 
                 this.highlightValue = data.value;
                 this.selected       = data.index;

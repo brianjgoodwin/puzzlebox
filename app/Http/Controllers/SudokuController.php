@@ -12,7 +12,9 @@ class SudokuController extends Controller
 {
     public function index(): View
     {
-        $difficulties = ['debug', 'easy', 'medium', 'hard', 'expert'];
+        $difficulties = app()->environment('production')
+            ? ['easy', 'medium', 'hard', 'expert']
+            : ['debug', 'easy', 'medium', 'hard', 'expert'];
         $today = now()->toDateString();
 
         $puzzles = [];
@@ -213,6 +215,37 @@ class SudokuController extends Controller
             'ok'    => true,
             'index' => $index,
             'value' => $solution[$index],
+        ]);
+    }
+
+    /**
+     * Check submitted cells against the stored solution without modifying the session.
+     * Returns wrong cell indices for any filled cell that doesn't match the solution.
+     * Empty cells are ignored — a partial board can still return ok: true.
+     */
+    public function checkSession(Request $request, GameSession $session): JsonResponse
+    {
+        $data = $request->validate([
+            'session_token' => 'required|uuid',
+            'cells'         => 'required|array|size:81',
+        ]);
+
+        $this->authorizeSession($session, $data['session_token']);
+        abort_if($session->is_completed, 409);
+
+        $submitted = $data['cells'];
+        $solution  = $session->puzzle->solution_data;
+
+        $wrongCells = [];
+        foreach ($submitted as $i => $val) {
+            if ($val !== null && $val !== $solution[$i]) {
+                $wrongCells[] = $i;
+            }
+        }
+
+        return response()->json([
+            'ok'          => empty($wrongCells),
+            'wrong_cells' => $wrongCells,
         ]);
     }
 

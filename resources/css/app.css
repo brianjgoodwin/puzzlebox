@@ -1,3 +1,37 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* High-contrast / large-print mode
+   Applied when the Alpine component sets data-high-contrast="true" on the game wrapper. */
+[data-high-contrast="true"] .sudoku-cell-value {
+    font-size: 1.25rem !important;
+    font-weight: 800 !important;
+}
+
+[data-high-contrast="true"] .sudoku-note-digit {
+    font-size: 8px !important;
+    font-weight: 600 !important;
+    color: #374151 !important; /* gray-700 */
+}
+
+/* Print styles — show only the board */
+@media print {
+    nav,
+    header,
+    .sudoku-controls,
+    .sudoku-statusbar {
+        display: none !important;
+    }
+
+    body {
+        background: white !important;
+        color: black !important;
+    }
+
+    .sudoku-board-wrapper {
+        display: flex !important;
+        justify-content: center !important;
+        padding: 2rem !important;
+    }
+}

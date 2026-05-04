@@ -341,17 +341,17 @@ The game engine is built. This phase finishes the player-facing experience.
 
 #### Sudoku UX — Batch 2 (template + minor JS)
 
-- [ ] **Hide debug difficulty on production** — filter it out in `SudokuController::index()` when `APP_ENV=production`
-- [ ] **Remove live mistakes counter** — the in-game "Mistakes: N" label is discouraging; remove it from the board view and keep it only in the completion stats
-- [ ] **Larger cells on mobile** — increase cell size from `w-10 h-10` to `w-11 h-11 sm:w-12 sm:h-12` for better touch targets
-- [ ] **"Back to puzzles" link** — add clear navigation from the game page back to the difficulty selector; players shouldn't need the browser back button
+- [x] **Hide debug difficulty on production** — `SudokuController::index()` filters `debug` when `app()->environment('production')`
+- [x] **Remove live mistakes counter** — removed from the status bar; count still shown in the completion modal as "Corrections"
+- [x] **Larger cells on mobile** — `w-8 h-8` (base/320px) → `sm:w-10 sm:h-10` → `md:w-11 md:h-11`; sized so the full board fits a 320px screen without horizontal scroll
+- [x] **"Back to puzzles" link** — `← All puzzles` added to the game page header, left of the title
 - [x] **Positive completion framing** — relabel "Mistakes" in the stats modal to "Corrections" (or remove the label entirely); frame completion as an achievement
-- [ ] **High-contrast / large-print mode** — toggle that applies larger fonts and stronger contrast; preference persisted to `localStorage`
-- [ ] **Print-friendly CSS** — `@media print` stylesheet that renders a clean, ink-friendly board
+- [x] **High-contrast / large-print mode** — `HC` toggle in status bar; sets `data-high-contrast` attribute on the game wrapper; enlarges and bolds cell values and note digits via CSS; preference persisted to `localStorage`
+- [x] **Print-friendly CSS** — `@media print` in `app.css` hides nav, header, status bar, and controls; shows only the board
 
 #### Sudoku UX — Batch 3 (new server endpoint)
 
-- [ ] **Check puzzle button** — new `POST /sudoku/sessions/{session}/check` endpoint that compares submitted cells against the stored solution and returns wrong cell indices, without modifying the session or marking it complete; wired to a "Check" button in the UI
+- [x] **Check puzzle button** — `POST /sudoku/sessions/{session}/check`; compares filled cells against the stored solution, returns wrong cell indices, does not modify the session; empty cells are skipped (partial boards allowed); wired to a "Check" button in the controls row
 
 ---
 
@@ -363,11 +363,19 @@ Put the game in front of real users before adding new games. This phase is about
 - [x] **Domain + DNS** — live at `puzzlebox.brianjgoodwin.dev`
 - [x] **Environment hardening** — `APP_ENV=production`, `APP_DEBUG=false`, `LOG_LEVEL=error`, trusted proxies configured
 - [x] **Puzzle bank seeded** — 60 puzzles per difficulty scheduled from 2026-05-03
-- [ ] **Error pages** — custom 404 and 500 views
-- [ ] **Rate limiting** — protect session and complete endpoints from abuse
-- [ ] **Email verification** — enable Breeze's built-in verification so accounts are real
-- [ ] **Queue worker** — set up a persistent worker for any background jobs (email, future notifications)
-- [ ] **Basic monitoring** — Netdata is already running; confirm alerts are in place for downtime
+- [x] **Error pages** — `resources/views/errors/404.blade.php` and `500.blade.php`; self-contained HTML (no Vite/layout dependency so they render even if the app is broken); dark-mode aware via `prefers-color-scheme`
+- [x] **Rate limiting** — `throttle` middleware on all game write endpoints: session start 20/min, autosave 60/min, complete/check 20/min, hint 30/min, solve 10/min
+- [ ] **Email verification** — All Breeze plumbing is already in place (`verify-email` view, `VerifyEmailController`, routes). Two steps remain:
+  1. Uncomment `MustVerifyEmail` on `User` model (`app/Models/User.php:5`)
+  2. Add `verified` middleware to any routes that should require a verified email (currently only `dashboard` — the game itself should remain open to unverified users)
+  3. Configure a real mailer in `.env` (see Queue worker note below) — without this, verification emails go to the log, not the user's inbox
+- [ ] **Queue worker** — `QUEUE_CONNECTION=database` and `MAIL_MAILER=log` are set in `.env`. Before email verification is useful:
+  1. Run `php artisan queue:table && php artisan migrate` to create the `jobs` table (if not already done)
+  2. Configure a real mail provider in `.env` (Resend, Mailgun, or SMTP — update `MAIL_MAILER`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM_ADDRESS`)
+  3. Create a systemd user service (e.g. `~/.config/systemd/user/puzzlebox-queue.service`) running `php artisan queue:work --sleep=3 --tries=3 --max-time=3600`; enable with `loginctl enable-linger` already in place
+- [ ] **Basic monitoring** — Netdata is running. Recommended additions:
+  - Confirm an alert fires if the `puzzlebox.service` process goes down (Netdata `go.d/systemdunits` collector)
+  - Consider a simple external uptime check (e.g. UptimeRobot free tier pinging `https://puzzlebox.brianjgoodwin.dev/up`) for off-server visibility
 
 ---
 

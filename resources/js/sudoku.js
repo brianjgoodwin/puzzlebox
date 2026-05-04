@@ -22,6 +22,7 @@ export function sudokuGame(config) {
         mistakes:    0,         // total erroneous entries this session
         hintsUsed:   0,
         hinting:     false,
+        checking:    false,
         complete:    false,
         stats:       null,      // filled on completion
         history:     [],        // cell snapshots for undo; capped at 50
@@ -37,6 +38,9 @@ export function sudokuGame(config) {
         timerInterval: null,
         timerHidden:   false,   // persisted to localStorage
 
+        // --- Accessibility -------------------------------------------------------
+        highContrast:  false,   // persisted to localStorage
+
         // =========================================================================
 
         init() {
@@ -45,6 +49,11 @@ export function sudokuGame(config) {
             // Restore timer visibility preference before first render.
             if (localStorage.getItem('puzzlebox_timer_hidden') === 'true') {
                 this.timerHidden = true;
+            }
+
+            // Restore high-contrast preference before first render.
+            if (localStorage.getItem('puzzlebox_high_contrast') === 'true') {
+                this.highContrast = true;
             }
 
             this.startSessionRequest();
@@ -416,6 +425,11 @@ export function sudokuGame(config) {
             localStorage.setItem('puzzlebox_timer_hidden', this.timerHidden);
         },
 
+        toggleHighContrast() {
+            this.highContrast = !this.highContrast;
+            localStorage.setItem('puzzlebox_high_contrast', this.highContrast);
+        },
+
         // --- Hint ----------------------------------------------------------------
 
         async hint() {
@@ -448,6 +462,26 @@ export function sudokuGame(config) {
                 this.checkComplete();
             } finally {
                 this.hinting = false;
+            }
+        },
+
+        // --- Check ---------------------------------------------------------------
+
+        async check() {
+            if (!this.sessionId || this.complete || this.checking) return;
+            this.checking = true;
+
+            try {
+                const res = await this.post(`/sudoku/sessions/${this.sessionId}/check`, {
+                    session_token: this.sessionToken,
+                    cells:         this.cells.map(c => c.value),
+                });
+
+                if (!res.ok) return;
+                const data = await res.json();
+                this.wrongCells = data.wrong_cells ?? [];
+            } finally {
+                this.checking = false;
             }
         },
 

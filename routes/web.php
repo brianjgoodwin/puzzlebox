@@ -21,10 +21,33 @@ Route::middleware('auth')->group(function () {
 // Sudoku game — no auth required to play
 Route::get('/sudoku', [SudokuController::class, 'index'])->name('sudoku.index');
 Route::get('/sudoku/{puzzle}', [SudokuController::class, 'show'])->name('sudoku.show');
-Route::post('/sudoku/{puzzle}/session', [SudokuController::class, 'startSession'])->name('sudoku.session.start');
-Route::patch('/sudoku/sessions/{session}', [SudokuController::class, 'saveSession'])->name('sudoku.session.save');
-Route::post('/sudoku/sessions/{session}/complete', [SudokuController::class, 'completeSession'])->name('sudoku.session.complete');
-Route::post('/sudoku/sessions/{session}/solve', [SudokuController::class, 'solveSession'])->name('sudoku.session.solve');
-Route::post('/sudoku/sessions/{session}/hint', [SudokuController::class, 'hintSession'])->name('sudoku.session.hint');
+
+// Session start: once per puzzle load; 20/min is generous headroom for normal use
+Route::post('/sudoku/{puzzle}/session', [SudokuController::class, 'startSession'])
+    ->middleware('throttle:20,1')
+    ->name('sudoku.session.start');
+
+// Autosave: fires every 4 s; 60/min = 4× normal rate, enough buffer for fast play
+Route::patch('/sudoku/sessions/{session}', [SudokuController::class, 'saveSession'])
+    ->middleware('throttle:60,1')
+    ->name('sudoku.session.save');
+
+// Completion / check: low volume in normal play; 20/min prevents brute-forcing
+Route::post('/sudoku/sessions/{session}/complete', [SudokuController::class, 'completeSession'])
+    ->middleware('throttle:20,1')
+    ->name('sudoku.session.complete');
+Route::post('/sudoku/sessions/{session}/check', [SudokuController::class, 'checkSession'])
+    ->middleware('throttle:20,1')
+    ->name('sudoku.session.check');
+
+// Hints: reasonable per-minute ceiling; 30/min ~ one every 2 s
+Route::post('/sudoku/sessions/{session}/hint', [SudokuController::class, 'hintSession'])
+    ->middleware('throttle:30,1')
+    ->name('sudoku.session.hint');
+
+// Solver: debug only, tight limit
+Route::post('/sudoku/sessions/{session}/solve', [SudokuController::class, 'solveSession'])
+    ->middleware('throttle:10,1')
+    ->name('sudoku.session.solve');
 
 require __DIR__.'/auth.php';

@@ -1,10 +1,16 @@
 <x-app-layout>
     <x-slot name="header">
-        <div class="flex items-center justify-between">
-            <h2 class="font-semibold text-xl text-gray-800 dark:text-gray-200 leading-tight">
-                Sudoku
-            </h2>
-            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+        <div class="flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3 min-w-0">
+                <a href="{{ route('sudoku.index') }}"
+                   class="shrink-0 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
+                    ← All puzzles
+                </a>
+                <h2 class="font-semibold text-xl text-gray-800 dark:text-gray-200 leading-tight truncate">
+                    Sudoku
+                </h2>
+            </div>
+            <span class="shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
                 {{ match($puzzle->difficulty) {
                     'debug'  => 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
                     'easy'   => 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
@@ -30,6 +36,7 @@
     <div
         class="py-8"
         x-data="sudokuGame(@js($gameConfig))"
+        :data-high-contrast="highContrast"
     >
         <div class="max-w-lg mx-auto px-4 space-y-6">
 
@@ -42,8 +49,8 @@
                 Could not connect to the server. Progress won't be saved — try refreshing the page.
             </div>
 
-            {{-- Status bar: timer | progress | mistakes --}}
-            <div class="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
+            {{-- Status bar: timer | progress | high-contrast toggle --}}
+            <div class="sudoku-statusbar flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
 
                 {{-- Left: timer + hide/show toggle --}}
                 <div class="flex items-center gap-1.5">
@@ -69,12 +76,14 @@
                 <span class="tabular-nums text-gray-500 dark:text-gray-400"
                       x-text="`${filledCount()} of 81`"></span>
 
-                {{-- Right: mistakes --}}
-                <div class="text-right min-w-[5rem]">
-                    <span x-show="mistakes > 0" x-cloak>
-                        Mistakes: <span x-text="mistakes" class="font-semibold text-red-500"></span>
-                    </span>
-                </div>
+                {{-- Right: high-contrast toggle --}}
+                <button
+                    @click="toggleHighContrast()"
+                    :aria-label="highContrast ? 'Turn off high contrast' : 'Turn on high contrast'"
+                    :title="highContrast ? 'High contrast: on' : 'High contrast: off'"
+                    class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                    x-text="highContrast ? 'HC on' : 'HC'"
+                ></button>
 
             </div>
 
@@ -88,8 +97,8 @@
             </div>
 
             {{-- Board --}}
-            <div class="flex justify-center">
-                <div class="inline-grid grid-cols-9 border-2 border-gray-800 dark:border-gray-200">
+            <div class="sudoku-board-wrapper flex justify-center">
+                <div class="sudoku-board inline-grid grid-cols-9 border-2 border-gray-800 dark:border-gray-200">
                     @for ($i = 0; $i < 81; $i++)
                         @php
                             $row = intdiv($i, 9);
@@ -106,8 +115,8 @@
                                 : ($row < 8 ? 'border-b border-b-gray-300 dark:border-b-gray-600' : '');
                         @endphp
                         <div
-                            class="relative w-10 h-10 sm:w-11 sm:h-11 flex items-center justify-center
-                                   select-none transition-colors duration-75
+                            class="relative w-8 h-8 sm:w-10 sm:h-10 md:w-11 md:h-11 flex items-center justify-center
+                                   select-none transition-colors duration-75 touch-manipulation
                                    {{ $borderR }} {{ $borderB }}"
                             :class="cellClasses({{ $i }})"
                             @click="selectCell({{ $i }})"
@@ -116,7 +125,7 @@
                             <span
                                 x-show="cells[{{ $i }}].value !== null"
                                 x-text="cells[{{ $i }}].value"
-                                class="text-base leading-none"
+                                class="sudoku-cell-value text-base leading-none"
                             ></span>
 
                             {{-- Pencil marks (3×3 mini grid) --}}
@@ -127,7 +136,7 @@
                                 @for ($n = 1; $n <= 9; $n++)
                                     <span
                                         x-text="cells[{{ $i }}].notes.includes({{ $n }}) ? '{{ $n }}' : ''"
-                                        class="text-[7px] text-center text-gray-400 dark:text-gray-500 leading-tight"
+                                        class="sudoku-note-digit text-[7px] text-center text-gray-400 dark:text-gray-500 leading-tight"
                                     ></span>
                                 @endfor
                             </div>
@@ -137,7 +146,7 @@
             </div>
 
             {{-- Controls --}}
-            <div class="space-y-3">
+            <div class="sudoku-controls space-y-3">
                 {{-- Notes toggle --}}
                 <div class="flex justify-center">
                     <button
@@ -152,11 +161,11 @@
                 </div>
 
                 {{-- Number pad — 3×3 grid in numpad order (7–9 top, 1–3 bottom) --}}
-                <div class="grid grid-cols-3 gap-1 max-w-[168px] mx-auto">
+                <div class="grid grid-cols-3 gap-1.5 w-[189px] sm:w-[216px] mx-auto">
                     @foreach ([7, 8, 9, 4, 5, 6, 1, 2, 3] as $n)
                         <button
                             @click="enterValue({{ $n }})"
-                            class="h-12 sm:h-14 rounded font-semibold text-lg
+                            class="h-14 sm:h-16 rounded-lg font-semibold text-xl touch-manipulation
                                    bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200
                                    border border-gray-300 dark:border-gray-600
                                    hover:bg-blue-50 dark:hover:bg-blue-900/30
@@ -203,6 +212,19 @@
                                transition-colors"
                     >
                         Hint<span x-show="hintsUsed > 0" x-text="` (${hintsUsed})`"></span>
+                    </button>
+
+                    <button
+                        @click="check()"
+                        :disabled="complete || checking || filledCount() === 0"
+                        class="px-6 py-1.5 text-sm font-medium rounded-full
+                               bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300
+                               border border-gray-300 dark:border-gray-600
+                               hover:bg-indigo-50 dark:hover:bg-indigo-900/20 hover:text-indigo-600
+                               disabled:opacity-40 disabled:cursor-not-allowed
+                               transition-colors"
+                    >
+                        Check
                     </button>
 
                     <template x-if="solverEnabled">

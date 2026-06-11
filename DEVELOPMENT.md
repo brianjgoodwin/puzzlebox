@@ -375,11 +375,11 @@ Put the game in front of real users before adding new games. This phase is about
 - [x] **Puzzle bank seeded** — 60 puzzles per difficulty scheduled from 2026-05-03
 - [x] **Error pages** — `resources/views/errors/404.blade.php` and `500.blade.php`; self-contained HTML (no Vite/layout dependency so they render even if the app is broken); dark-mode aware via `prefers-color-scheme`
 - [x] **Rate limiting** — `throttle` middleware on all game write endpoints: session start 20/min, autosave 60/min, complete/check 20/min, hint 30/min, solve 10/min
-- [ ] **Email verification** — All Breeze plumbing is already in place (`verify-email` view, `VerifyEmailController`, routes). Two steps remain:
+- [ ] **Email verification** *(deferred — no user-facing cost until accounts matter)* — All Breeze plumbing is already in place (`verify-email` view, `VerifyEmailController`, routes). When ready:
   1. Uncomment `MustVerifyEmail` on `User` model (`app/Models/User.php:5`)
   2. Add `verified` middleware to any routes that should require a verified email (currently only `dashboard` — the game itself should remain open to unverified users)
   3. Configure a real mailer in `.env` (see Queue worker note below) — without this, verification emails go to the log, not the user's inbox
-- [ ] **Queue worker** — `QUEUE_CONNECTION=database` and `MAIL_MAILER=log` are set in `.env`. Before email verification is useful:
+- [ ] **Queue worker** *(deferred — blocked on email provider choice)* — `QUEUE_CONNECTION=database` and `MAIL_MAILER=log` are set in `.env`. When ready:
   1. Run `php artisan queue:table && php artisan migrate` to create the `jobs` table (if not already done)
   2. Configure a real mail provider in `.env` (Resend, Mailgun, or SMTP — update `MAIL_MAILER`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM_ADDRESS`)
   3. Create a systemd user service (e.g. `~/.config/systemd/user/puzzlebox-queue.service`) running `php artisan queue:work --sleep=3 --tries=3 --max-time=3600`; enable with `loginctl enable-linger` already in place
@@ -391,14 +391,51 @@ Put the game in front of real users before adding new games. This phase is about
 
 ### Phase 3 — Cryptogram
 
-A cryptogram substitutes each letter in a quote with a different letter (A→M, B→X, etc.). The player figures out the mapping.
+A cryptogram substitutes each letter in a quote with a different letter (A→M, B→X, etc.). The player figures out the substitution mapping by reasoning from letter frequency and context.
 
-- [ ] **Quote bank** — import a set of public domain quotes from Project Gutenberg; store as a seedable table
-- [ ] **Puzzle model** — extend `puzzles` table or use `puzzle_data` JSON to store the cipher mapping and scrambled text
-- [ ] **Generator** — pick a quote, generate a random letter-substitution cipher, verify it's solvable and unambiguous
-- [ ] **Interactive board** — click a cipher letter, type the decoded letter; very different UI from Sudoku but same session/autosave pattern
-- [ ] **Validation** — server-side check against the original quote (same pattern as Sudoku)
-- [ ] **Daily puzzle** — plug into the same `publish_date` infrastructure from Phase 1
+One difficulty level to start. A small curated quote bank (10–15 quotes) seeded via artisan command. Each puzzle pre-reveals the 2–3 most frequent letters in that quote to give players a foothold.
+
+#### Data model
+
+`puzzle_data` JSON shape (stored in the existing `puzzles` table, `type = 'cryptogram'`):
+
+```json
+{
+  "plaintext": "The quick brown fox.",
+  "ciphertext": "Dkh txlfn eurzq ira.",
+  "attribution": "Author Name",
+  "revealed": ["K", "H", "X"]
+}
+```
+
+- `plaintext` — the original quote (never sent to the client)
+- `ciphertext` — the encoded quote; punctuation and spaces are preserved as-is
+- `attribution` — shown below the puzzle
+- `revealed` — cipher letters whose plaintext value is pre-revealed on load (the 2–3 highest-frequency letters in that quote)
+
+`solution_data` JSON shape:
+
+```json
+{
+  "mapping": { "D": "T", "K": "H", "H": "E", "T": "Q", ... }
+}
+```
+
+Each key is a cipher letter; each value is its plaintext letter. Only alpha characters are included. Non-letter characters need no mapping.
+
+#### Tasks
+
+- [ ] **Quote bank** — seed 10–15 short public-domain quotes (15–60 words) via `php artisan puzzle:generate cryptogram`. Store quotes as a plain PHP array in the generator class; no separate DB table needed at this scale.
+- [ ] **Generator** — `app/Services/Cryptogram/Generator.php`: pick a quote, build a random bijective letter substitution (no letter maps to itself), apply it to produce the ciphertext, identify the 2–3 highest-frequency cipher letters to pre-reveal, write `puzzle_data` and `solution_data`.
+- [ ] **`puzzle:generate` command** — extend the existing `GeneratePuzzles` artisan command to accept `cryptogram` as a type (alongside `sudoku` difficulties); wire to the new generator.
+- [ ] **Controller and routes** — `CryptogramController` following the same pattern as `SudokuController`: `index`, `show`, `startSession`, `saveSession`, `completeSession`, `hintSession`. Add to `routes/web.php` under `/cryptogram`.
+- [ ] **`board_state` shape** — `{ "guesses": { "D": "T", "K": null, ... } }` — a map from each unique cipher letter to the player's current guess (or null). Stored in `game_sessions.board_state`.
+- [ ] **Interactive board** — Alpine component (`resources/js/cryptogram.js`). Display ciphertext with an input slot beneath each unique cipher letter. Clicking any instance of a cipher letter selects all of them. Typing fills the guess for that letter across the whole puzzle. Pre-revealed letters are locked (amber, same pattern as Sudoku hints). Non-letter characters render as static text.
+- [ ] **Conflict / completion detection** — client-side: flag duplicate guesses (same plaintext letter assigned to two different cipher letters). Completion check: all cipher letters mapped, no duplicates — then call `complete` endpoint.
+- [ ] **Server-side validation** — `completeSession` compares `guesses` map against `solution_data.mapping`; returns wrong cipher-letter indices without revealing correct values (same pattern as Sudoku).
+- [ ] **Landing page** — add a Cryptogram card to `sudoku/index.blade.php` (or extract to a shared games index at `/`).
+- [ ] **Daily puzzle** — same `publish_date` infrastructure as Sudoku; `puzzle:generate cryptogram --schedule` assigns sequential dates.
+- [ ] **Seed initial puzzle bank** — generate and schedule 10–15 cryptogram puzzles on production.
 
 ---
 

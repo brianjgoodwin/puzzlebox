@@ -72,9 +72,18 @@ The app is live at **https://puzzlebox.brianjgoodwin.dev**.
 - **Database** — MySQL 8.4 in Docker, persistent volume `sail-mysql`. Start with `docker compose up mysql -d` from the project root.
 - **Firewall** — UFW is active. Port 8000 is intentionally not open to the internet; a rule allows the `caddy-proxy` Docker network (`172.18.0.0/16`) to reach it.
 
+### Database credentials
+
+Two separate MySQL credentials are required in `.env` — do not reuse the same value:
+
+- `DB_ROOT_PASSWORD` — MySQL root; used only by the container healthcheck, never by the app
+- `DB_PASSWORD` — the `puzzlebox` app user; restricted to `SELECT/INSERT/UPDATE/DELETE/CREATE/ALTER/INDEX/DROP/REFERENCES` on the `puzzlebox` database only
+
+Generate each with `openssl rand -base64 32`. See the README for the full setup procedure.
+
 ### Trusted proxies
 
-`bootstrap/app.php` sets `trustProxies(at: '*')` so that Laravel respects the `X-Forwarded-Proto: https` header from Caddy and generates correct HTTPS asset URLs.
+`bootstrap/app.php` sets `trustProxies(at: '172.18.0.0/16')` so that Laravel respects the `X-Forwarded-Proto: https` header from Caddy and generates correct HTTPS asset URLs. The subnet matches the `caddy-proxy_default` Docker network — if that network is ever recreated with a different gateway, update this value to match.
 
 ### Deploying updates
 
@@ -255,15 +264,16 @@ Expert puzzles take the longest to generate — allow a few minutes. To top up t
 
 ### Sudoku routes
 
-| Method | Path | Action |
-|--------|------|--------|
-| GET | `/sudoku` | Landing page — today's puzzle per difficulty |
-| GET | `/sudoku/{puzzle}` | Show the game board |
-| POST | `/sudoku/{puzzle}/session` | Start or resume a session |
-| PATCH | `/sudoku/sessions/{session}` | Autosave board state |
-| POST | `/sudoku/sessions/{session}/hint` | Reveal one correct cell |
-| POST | `/sudoku/sessions/{session}/complete` | Validate and complete |
-| POST | `/sudoku/sessions/{session}/solve` | Fill entire board (local debug only — gated by `SUDOKU_SOLVER_ENABLED`) |
+| Method | Path | Action | Rate limit |
+|--------|------|--------|------------|
+| GET | `/sudoku` | Landing page — today's puzzle per difficulty | — |
+| GET | `/sudoku/{puzzle}` | Show the game board | — |
+| POST | `/sudoku/{puzzle}/session` | Start or resume a session | 20/min |
+| PATCH | `/sudoku/sessions/{session}` | Autosave board state | 60/min |
+| POST | `/sudoku/sessions/{session}/hint` | Reveal one correct cell | 30/min |
+| POST | `/sudoku/sessions/{session}/check` | Check filled cells without completing | 20/min |
+| POST | `/sudoku/sessions/{session}/complete` | Validate and complete | 20/min |
+| POST | `/sudoku/sessions/{session}/solve` | Fill entire board (local debug only — gated by `SUDOKU_SOLVER_ENABLED`) | 10/min |
 
 ---
 

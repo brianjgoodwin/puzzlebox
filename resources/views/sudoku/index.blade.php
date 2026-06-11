@@ -43,7 +43,7 @@
                     ];
                 @endphp
 
-                @foreach (['debug', 'easy', 'medium', 'hard', 'expert'] as $difficulty)
+                @foreach (array_keys($puzzles) as $difficulty)
                     @php
                         $puzzle    = $puzzles[$difficulty];
                         $badgeCls  = $cards[$difficulty]['badge'];

@@ -1,43 +1,16 @@
 services:
-    laravel.test:
-        build:
-            context: './docker/8.4'
-            dockerfile: Dockerfile
-            args:
-                WWWGROUP: '${WWWGROUP}'
-        image: 'sail-8.4/app'
-        extra_hosts:
-            - 'host.docker.internal:host-gateway'
-        ports:
-            - '${APP_PORT:-80}:80'
-            - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'
-        environment:
-            WWWUSER: '${WWWUSER}'
-            LARAVEL_SAIL: 1
-            XDEBUG_MODE: '${SAIL_XDEBUG_MODE:-off}'
-            XDEBUG_CONFIG: '${SAIL_XDEBUG_CONFIG:-client_host=host.docker.internal}'
-            IGNITION_LOCAL_SITES_PATH: '${PWD}'
-        volumes:
-            - '.:/var/www/html'
-        networks:
-            - sail
-        depends_on:
-            - mysql
     mysql:
         image: 'mysql:8.4'
         ports:
-            - '${FORWARD_DB_PORT:-3306}:3306'
+            - '127.0.0.1:${FORWARD_DB_PORT:-3306}:3306'
         environment:
-            MYSQL_ROOT_PASSWORD: '${DB_PASSWORD}'
-            MYSQL_ROOT_HOST: '%'
+            MYSQL_ROOT_PASSWORD: '${DB_ROOT_PASSWORD}'
+            MYSQL_ROOT_HOST: 'localhost'
             MYSQL_DATABASE: '${DB_DATABASE}'
             MYSQL_USER: '${DB_USERNAME}'
             MYSQL_PASSWORD: '${DB_PASSWORD}'
-            MYSQL_ALLOW_EMPTY_PASSWORD: 1
-            MYSQL_EXTRA_OPTIONS: '${MYSQL_EXTRA_OPTIONS:-}'
         volumes:
             - 'sail-mysql:/var/lib/mysql'
-            - './vendor/laravel/sail/database/mysql/create-testing-database.sh:/docker-entrypoint-initdb.d/10-create-testing-database.sh'
         networks:
             - sail
         healthcheck:
@@ -45,7 +18,7 @@ services:
                 - CMD
                 - mysqladmin
                 - ping
-                - '-p${DB_PASSWORD}'
+                - '-p${DB_ROOT_PASSWORD}'
             retries: 3
             timeout: 5s
 networks:

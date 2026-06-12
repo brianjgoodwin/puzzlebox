@@ -2,7 +2,7 @@
 
 A lightweight, browser-based puzzle game site. Think NYTimes Games in spirit: clean UI, no bloat, optional accounts. Anonymous play works out of the box; creating an account persists scores and streaks across sessions.
 
-**Planned games:** Sudoku (active), Cryptogram, KenKen.
+**Live games:** Sudoku, Cryptogram. **Planned:** KenKen.
 
 ---
 
@@ -121,44 +121,52 @@ docker compose -f ~/developer/caddy-proxy/docker-compose.yml exec caddy caddy re
 puzzlebox/
 ├── app/
 │   ├── Console/Commands/
-│   │   └── GeneratePuzzles.php     # puzzle:generate artisan command
+│   │   └── GeneratePuzzles.php          # puzzle:generate artisan command (sudoku + cryptogram)
 │   ├── Http/Controllers/
-│   │   ├── Auth/                   # Breeze auth controllers
+│   │   ├── Auth/                        # Breeze auth controllers
 │   │   ├── ProfileController.php
-│   │   └── SudokuController.php    # Game routes: index, show, session start/save/hint/complete/solve
+│   │   ├── SudokuController.php         # index, show, session start/save/hint/check/complete/solve
+│   │   └── CryptogramController.php     # index, show, session start/save/hint/complete
 │   ├── Models/
-│   │   ├── GameSession.php         # Tracks a play session (anonymous or authed)
-│   │   ├── Puzzle.php              # Puzzle definitions and solutions
+│   │   ├── GameSession.php              # Tracks a play session (anonymous or authed)
+│   │   ├── Puzzle.php                   # Puzzle definitions and solutions
 │   │   └── User.php
 │   └── Services/
-│       └── Sudoku/
-│           ├── Generator.php       # Generates valid puzzles by difficulty
-│           └── Solver.php          # Backtracking solver used by Generator + validation
+│       ├── Sudoku/
+│       │   ├── Generator.php            # Generates valid puzzles by difficulty
+│       │   └── Solver.php               # Backtracking solver used by Generator + validation
+│       └── Cryptogram/
+│           └── Generator.php            # Picks quote, builds derangement cipher, pre-reveals letters
 ├── database/
 │   └── migrations/
 │       ├── ..._create_users_table.php
 │       ├── ..._create_puzzles_table.php
 │       ├── ..._create_game_sessions_table.php
-│       └── ..._add_debug_difficulty_to_puzzles_table.php
+│       ├── ..._add_debug_difficulty_to_puzzles_table.php
+│       └── ..._add_standard_difficulty_to_puzzles_table.php
 ├── docker/
-│   └── 8.4/                        # Custom Dockerfile (not used in local dev)
+│   └── 8.4/                             # Custom Dockerfile (not used in local dev)
 ├── resources/
 │   ├── js/
-│   │   ├── app.js                  # Alpine.js init; registers sudokuGame globally
-│   │   ├── bootstrap.js            # Sets window.csrfToken for fetch requests
-│   │   └── sudoku.js               # Alpine component: board state, input, autosave, timer
+│   │   ├── app.js                       # Alpine.js init; registers sudokuGame + cryptogramGame
+│   │   ├── bootstrap.js                 # Sets window.csrfToken for fetch requests
+│   │   ├── sudoku.js                    # Alpine component: board state, input, autosave, timer
+│   │   └── cryptogram.js               # Alpine component: cipher guesses, keyboard nav, autosave
 │   └── views/
 │       ├── layouts/
 │       │   ├── app.blade.php
-│       │   └── navigation.blade.php  # Handles guest and auth nav states
-│       └── sudoku/
-│           ├── index.blade.php     # Daily puzzle landing page — four difficulty cards
-│           └── show.blade.php      # 9×9 board, number pad, hint, completion modal
+│       │   └── navigation.blade.php     # Handles guest and auth nav states
+│       ├── sudoku/
+│       │   ├── index.blade.php          # Daily puzzle landing page — difficulty cards
+│       │   └── show.blade.php           # 9×9 board, number pad, hint, completion modal
+│       └── cryptogram/
+│           ├── index.blade.php          # Daily puzzle landing page — single card
+│           └── show.blade.php           # Cipher board, alphabet key, hint, completion modal
 ├── tests/
 │   └── Unit/Services/Sudoku/
-│       ├── GeneratorTest.php       # 20 tests across all 4 difficulties
-│       └── SolverTest.php          # 17 tests: solve, uniqueness, validation, placement
-└── compose.yaml                    # Docker Compose — MySQL service only
+│       ├── GeneratorTest.php            # 20 tests across all 4 difficulties
+│       └── SolverTest.php               # 17 tests: solve, uniqueness, validation, placement
+└── compose.yaml                         # Docker Compose — MySQL service only
 ```
 
 ---
@@ -171,8 +179,8 @@ puzzlebox/
 |--------|------|-------|
 | `id` | bigint | Primary key |
 | `type` | enum | `sudoku`, `cryptogram`, `kenken` |
-| `difficulty` | enum | `debug`, `easy`, `medium`, `hard`, `expert` |
-| `puzzle_data` | json | Starting state. For Sudoku: 81-element array, `null` = blank cell |
+| `difficulty` | enum | `debug`, `easy`, `medium`, `hard`, `expert`, `standard` |
+| `puzzle_data` | json | Starting state. Shape varies by game type — see sections below |
 | `solution_data` | json | Complete solved state — never sent to the client |
 | `publish_date` | date | Optional. Unique per `(type, difficulty, publish_date)` — enables one puzzle per difficulty per day |
 | `created_at/updated_at` | timestamps | |
@@ -185,7 +193,7 @@ puzzlebox/
 | `puzzle_id` | bigint FK | References `puzzles` |
 | `user_id` | bigint FK, nullable | `null` = anonymous player |
 | `session_token` | varchar(64) | UUID stored in `localStorage`; identifies anonymous players |
-| `board_state` | json | `{ cells: [null\|1-9, …×81], notes: [[…], …×81] }` |
+| `board_state` | json | Shape varies by game type — see sections below |
 | `hints_used` | smallint | Count of hints requested |
 | `mistakes` | smallint | Total count of conflicting entries made |
 | `elapsed_seconds` | int | Total time played |
@@ -195,6 +203,22 @@ puzzlebox/
 
 **Indexes:** `(session_token, puzzle_id)` and `(user_id, puzzle_id)`.
 
+#### Sudoku board_state shape
+
+```json
+{ "cells": [null, 5, 3, null, ...], "notes": [[], [2,4], [], ...] }
+```
+
+81-element arrays. `cells`: `null` = empty, `1–9` = placed. `notes`: array of pencil-mark integers per cell.
+
+#### Cryptogram board_state shape
+
+```json
+{ "guesses": { "D": "T", "K": null, "H": "E", ... } }
+```
+
+A map from each unique cipher letter to the player's current guess (`null` = not yet guessed).
+
 ### Anonymous → Authenticated flow
 
 A UUID `session_token` is generated on first visit and stored in `localStorage`. All game sessions (anonymous or not) are keyed to this token. If the player logs in, `user_id` is set on the session — linking their history without losing progress.
@@ -203,7 +227,19 @@ A UUID `session_token` is generated on first visit and stored in `localStorage`.
 
 ## Puzzle Generation
 
-Puzzles are pre-generated and stored in the database. Generation uses a two-phase backtracking algorithm:
+Puzzles are pre-generated and stored in the database. The `puzzle:generate` artisan command accepts a `type` as its first argument.
+
+```bash
+# Sudoku
+php artisan puzzle:generate sudoku <difficulty> [--count=N] [--schedule]
+
+# Cryptogram
+php artisan puzzle:generate cryptogram [--count=N] [--schedule]
+```
+
+### Sudoku generation
+
+Uses a two-phase backtracking algorithm:
 
 1. **Fill** — a blank grid is filled with a valid solution using randomised backtracking.
 2. **Remove** — cells are removed one at a time in random order. After each removal the solver checks that exactly one solution still exists. Cells that would break uniqueness are restored.
@@ -218,37 +254,48 @@ Puzzles are pre-generated and stored in the database. Generation uses a two-phas
 | Hard | ~28 | ~53 | |
 | Expert | ~24 | ~57 | |
 
-### Generating puzzles
+`debug` difficulty should not be generated on the production server.
+
+### Cryptogram generation
+
+`app/Services/Cryptogram/Generator.php` contains a hardcoded bank of 12 curated public-domain quotes. Each call to `generate()`:
+
+1. Picks a random quote.
+2. Builds a random **derangement** (bijective substitution where no letter maps to itself).
+3. Applies the cipher to produce the ciphertext (punctuation and spaces preserved).
+4. Identifies the 3 highest-frequency cipher letters to pre-reveal as a starting hint.
+
+Cryptogram uses the `difficulty = 'standard'` enum value (added via migration alongside `type = 'cryptogram'`).
+
+### Generating and scheduling puzzles
 
 ```bash
-# Generate one puzzle
-php artisan puzzle:generate easy
+# Generate one Sudoku puzzle
+php artisan puzzle:generate sudoku easy
 
 # Generate a batch
-php artisan puzzle:generate hard --count=10
+php artisan puzzle:generate sudoku hard --count=10
 
 # Generate and schedule (assigns sequential publish_date values)
-php artisan puzzle:generate hard --count=10 --schedule
+php artisan puzzle:generate sudoku hard --count=10 --schedule
+php artisan puzzle:generate cryptogram --count=10 --schedule
 ```
 
-Valid difficulties: `easy`, `medium`, `hard`, `expert`. Puzzles are added to the `puzzles` table and immediately available to players.
-
-The `--schedule` flag assigns sequential `publish_date` values starting the day after the last scheduled puzzle for that difficulty (or today if none exist). Each difficulty's schedule is independent.
-
-`debug` is also a valid difficulty (only 3 blank cells) but should not be generated on the production server.
+The `--schedule` flag assigns sequential `publish_date` values starting the day after the last scheduled puzzle for that type/difficulty (or today if none exist). Each game type's schedule is independent.
 
 ### Initial puzzle bank seeding (production)
 
-Run once on the remote server to seed ~60 days of puzzles per difficulty:
+Run once on the remote server:
 
 ```bash
-php artisan puzzle:generate easy   --count=60 --schedule
-php artisan puzzle:generate medium --count=60 --schedule
-php artisan puzzle:generate hard   --count=60 --schedule
-php artisan puzzle:generate expert --count=60 --schedule
+php artisan puzzle:generate sudoku easy   --count=60 --schedule
+php artisan puzzle:generate sudoku medium --count=60 --schedule
+php artisan puzzle:generate sudoku hard   --count=60 --schedule
+php artisan puzzle:generate sudoku expert --count=60 --schedule
+php artisan puzzle:generate cryptogram    --count=30 --schedule
 ```
 
-Expert puzzles take the longest to generate — allow a few minutes. To top up the bank later, run the same commands again with the desired count; the schedule will extend from where it left off.
+Expert Sudoku puzzles take the longest to generate — allow a few minutes. To top up the bank later, run the same commands again; the schedule extends from where it left off.
 
 ---
 
@@ -274,6 +321,30 @@ Expert puzzles take the longest to generate — allow a few minutes. To top up t
 | POST | `/sudoku/sessions/{session}/check` | Check filled cells without completing | 20/min |
 | POST | `/sudoku/sessions/{session}/complete` | Validate and complete | 20/min |
 | POST | `/sudoku/sessions/{session}/solve` | Fill entire board (local debug only — gated by `SUDOKU_SOLVER_ENABLED`) | 10/min |
+
+---
+
+## Cryptogram Game Flow
+
+1. `GET /cryptogram` — landing page showing today's puzzle. Prefers a puzzle with a matching `publish_date`; falls back to a random unscheduled puzzle.
+2. `GET /cryptogram/{puzzle}` — renders the cipher board; `ciphertext`, `attribution`, and `revealed` letters embedded in the page via `@js()`. `plaintext` and `solution_data` are never sent to the client.
+3. On load, Alpine calls `POST /cryptogram/{puzzle}/session`. The server creates a new session (with pre-revealed letters already in `guesses`) or restores an existing incomplete one.
+4. The player clicks any instance of a cipher letter in the puzzle or in the alphabet key below it to select it, then types their guess. All instances of that cipher letter update simultaneously.
+5. Pre-revealed letters (shown in amber) and hint-revealed letters are locked — the player cannot change them.
+6. Board state is autosaved via `PATCH /cryptogram/sessions/{session}` after a 4-second debounce.
+7. The player can request a hint via `POST /cryptogram/sessions/{session}/hint`. The server reveals one random cipher letter that is still wrong or unguessed and increments `hints_used`.
+8. When all unique cipher letters in the ciphertext have a guess, Alpine calls `POST /cryptogram/sessions/{session}/complete`. The server compares `guesses` against `solution_data.mapping` and returns either success (with stats) or a list of wrong cipher letters (without revealing correct values).
+
+### Cryptogram routes
+
+| Method | Path | Action | Rate limit |
+|--------|------|--------|------------|
+| GET | `/cryptogram` | Landing page — today's puzzle | — |
+| GET | `/cryptogram/{puzzle}` | Show the cipher board | — |
+| POST | `/cryptogram/{puzzle}/session` | Start or resume a session | 20/min |
+| PATCH | `/cryptogram/sessions/{session}` | Autosave guess state | 60/min |
+| POST | `/cryptogram/sessions/{session}/hint` | Reveal one cipher letter | 30/min |
+| POST | `/cryptogram/sessions/{session}/complete` | Validate and complete | 20/min |
 
 ---
 
@@ -389,53 +460,27 @@ Put the game in front of real users before adding new games. This phase is about
 
 ---
 
-### Phase 3 — Cryptogram
+### Phase 3 — Cryptogram: Complete
 
 A cryptogram substitutes each letter in a quote with a different letter (A→M, B→X, etc.). The player figures out the substitution mapping by reasoning from letter frequency and context.
 
-One difficulty level to start. A small curated quote bank (10–15 quotes) seeded via artisan command. Each puzzle pre-reveals the 2–3 most frequent letters in that quote to give players a foothold.
+One difficulty level (`standard`). 12 curated public-domain quotes. Each puzzle pre-reveals the 3 most frequent cipher letters as a starting foothold.
 
-#### Data model
+- [x] **Generator** — `app/Services/Cryptogram/Generator.php`: random derangement cipher (no letter maps to itself), 3 highest-frequency letters pre-revealed
+- [x] **Quote bank** — 12 quotes hardcoded in the generator class; no separate DB table needed at this scale
+- [x] **`puzzle:generate` command** — extended to accept `cryptogram` as a type: `php artisan puzzle:generate cryptogram [--count=N] [--schedule]`
+- [x] **`standard` difficulty** — migration adds `standard` to the `difficulty` enum
+- [x] **Controller and routes** — `CryptogramController` with `index`, `show`, `startSession`, `saveSession`, `completeSession`, `hintSession`; 6 routes under `/cryptogram`
+- [x] **Interactive board** — Alpine component (`resources/js/cryptogram.js`): cipher board display with guess slots, alphabet key panel, keyboard input, autosave, hint, timer, completion modal
+- [x] **Server-side validation** — `completeSession` compares `guesses` against `solution_data.mapping`; returns wrong cipher letters without revealing correct values
+- [x] **Navigation** — Cryptogram link added to desktop and mobile nav
+- [x] **Daily puzzle** — same `publish_date` infrastructure as Sudoku
+- [x] **Initial puzzle bank seeded** — puzzles generated and scheduled on production
 
-`puzzle_data` JSON shape (stored in the existing `puzzles` table, `type = 'cryptogram'`):
+#### Open / future improvements
 
-```json
-{
-  "plaintext": "The quick brown fox.",
-  "ciphertext": "Dkh txlfn eurzq ira.",
-  "attribution": "Author Name",
-  "revealed": ["K", "H", "X"]
-}
-```
-
-- `plaintext` — the original quote (never sent to the client)
-- `ciphertext` — the encoded quote; punctuation and spaces are preserved as-is
-- `attribution` — shown below the puzzle
-- `revealed` — cipher letters whose plaintext value is pre-revealed on load (the 2–3 highest-frequency letters in that quote)
-
-`solution_data` JSON shape:
-
-```json
-{
-  "mapping": { "D": "T", "K": "H", "H": "E", "T": "Q", ... }
-}
-```
-
-Each key is a cipher letter; each value is its plaintext letter. Only alpha characters are included. Non-letter characters need no mapping.
-
-#### Tasks
-
-- [ ] **Quote bank** — seed 10–15 short public-domain quotes (15–60 words) via `php artisan puzzle:generate cryptogram`. Store quotes as a plain PHP array in the generator class; no separate DB table needed at this scale.
-- [ ] **Generator** — `app/Services/Cryptogram/Generator.php`: pick a quote, build a random bijective letter substitution (no letter maps to itself), apply it to produce the ciphertext, identify the 2–3 highest-frequency cipher letters to pre-reveal, write `puzzle_data` and `solution_data`.
-- [ ] **`puzzle:generate` command** — extend the existing `GeneratePuzzles` artisan command to accept `cryptogram` as a type (alongside `sudoku` difficulties); wire to the new generator.
-- [ ] **Controller and routes** — `CryptogramController` following the same pattern as `SudokuController`: `index`, `show`, `startSession`, `saveSession`, `completeSession`, `hintSession`. Add to `routes/web.php` under `/cryptogram`.
-- [ ] **`board_state` shape** — `{ "guesses": { "D": "T", "K": null, ... } }` — a map from each unique cipher letter to the player's current guess (or null). Stored in `game_sessions.board_state`.
-- [ ] **Interactive board** — Alpine component (`resources/js/cryptogram.js`). Display ciphertext with an input slot beneath each unique cipher letter. Clicking any instance of a cipher letter selects all of them. Typing fills the guess for that letter across the whole puzzle. Pre-revealed letters are locked (amber, same pattern as Sudoku hints). Non-letter characters render as static text.
-- [ ] **Conflict / completion detection** — client-side: flag duplicate guesses (same plaintext letter assigned to two different cipher letters). Completion check: all cipher letters mapped, no duplicates — then call `complete` endpoint.
-- [ ] **Server-side validation** — `completeSession` compares `guesses` map against `solution_data.mapping`; returns wrong cipher-letter indices without revealing correct values (same pattern as Sudoku).
-- [ ] **Landing page** — add a Cryptogram card to `sudoku/index.blade.php` (or extract to a shared games index at `/`).
-- [ ] **Daily puzzle** — same `publish_date` infrastructure as Sudoku; `puzzle:generate cryptogram --schedule` assigns sequential dates.
-- [ ] **Seed initial puzzle bank** — generate and schedule 10–15 cryptogram puzzles on production.
+- [ ] Expand quote bank beyond 12 quotes
+- [ ] Consider a "duplicate guess" client-side warning (same plain letter assigned to two different cipher letters)
 
 ---
 

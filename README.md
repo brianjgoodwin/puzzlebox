@@ -4,7 +4,7 @@ A lightweight, browser-based puzzle game site. Clean UI, no bloat, optional acco
 
 Built with Laravel 12, Alpine.js, and Tailwind CSS.
 
-**Games:** Sudoku (live), Cryptogram and KenKen (planned).
+**Games:** Sudoku (live), Cryptogram (live), KenKen (planned).
 
 ---
 
@@ -37,10 +37,11 @@ The default `.env.example` uses SQLite. No Docker needed.
 
 ```bash
 php artisan migrate
-php artisan puzzle:generate easy --count=5
-php artisan puzzle:generate medium --count=5
-php artisan puzzle:generate hard --count=5
-php artisan puzzle:generate expert --count=5
+php artisan puzzle:generate sudoku easy --count=5
+php artisan puzzle:generate sudoku medium --count=5
+php artisan puzzle:generate sudoku hard --count=5
+php artisan puzzle:generate sudoku expert --count=5
+php artisan puzzle:generate cryptogram --count=5
 ```
 
 ### Option B — MySQL via Docker
@@ -187,7 +188,7 @@ Set `SUDOKU_SOLVER_ENABLED=true` in `.env` to show a **Solve** button in-game th
 A `debug` difficulty (only 3 blank cells) can also be generated locally for quick end-to-end testing:
 
 ```bash
-php artisan puzzle:generate debug --count=3
+php artisan puzzle:generate sudoku debug --count=3
 ```
 
 ---

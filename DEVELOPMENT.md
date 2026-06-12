@@ -6,6 +6,15 @@ A lightweight, browser-based puzzle game site. Think NYTimes Games in spirit: cl
 
 ---
 
+## Docs
+
+| File | Contents |
+|------|----------|
+| [docs/audit-2026-06-12.md](docs/audit-2026-06-12.md) | Full findings from the June 2026 accessibility, code quality, and security audit (46 findings) |
+| [docs/remediation-plan.md](docs/remediation-plan.md) | Batched remediation plan for all critical, high, and medium findings; low priority items deferred |
+
+---
+
 ## Tech Stack
 
 | Layer | Choice | Why |

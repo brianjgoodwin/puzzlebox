@@ -14,6 +14,9 @@
                     <x-nav-link :href="route('sudoku.index')" :active="request()->routeIs('sudoku.*')">
                         Sudoku
                     </x-nav-link>
+                    <x-nav-link :href="route('cryptogram.index')" :active="request()->routeIs('cryptogram.*')">
+                        Cryptogram
+                    </x-nav-link>
                     @auth
                     <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
                         Dashboard
@@ -78,6 +81,9 @@
         <div class="pt-2 pb-3 space-y-1">
             <x-responsive-nav-link :href="route('sudoku.index')" :active="request()->routeIs('sudoku.*')">
                 Sudoku
+            </x-responsive-nav-link>
+            <x-responsive-nav-link :href="route('cryptogram.index')" :active="request()->routeIs('cryptogram.*')">
+                Cryptogram
             </x-responsive-nav-link>
             @auth
             <x-responsive-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
